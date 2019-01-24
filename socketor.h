@@ -1,7 +1,6 @@
 #ifndef __SOCKETOR_H__
 #define __SOCKETOR_H__
 
-
 #include <cstdlib>
 #include <cstdint>
 #include <map>
@@ -31,6 +30,7 @@ struct Socketor {
   Socketor* master_at(int port);
   Socketor* guest_to() {}
   Socketor* do_on_guest(GuestHandler h);
+  Socketor* do_on_business(BusinessHandler h);
   Socketor* do_on_done(DoneHandler h);
   void online();
   void offline();

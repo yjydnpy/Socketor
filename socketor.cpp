@@ -9,13 +9,17 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>  
 #include <errno.h>
+#include <cassert>
 
 #define events_size 100
 
 static void cannot_wait(int s) {
   int opts = fcntl(s, F_GETFL);
   opts = opts | O_NONBLOCK;
-  fcntl(s, F_SETFL, opts);
+  int st = fcntl(s, F_SETFL, opts);
+  if (st == -1) {
+    fprintf(stderr, "nonblock error %d -> %s\n", errno, strerror(errno));
+  }
 }
 
 static void auto_greeting(int s) {
@@ -47,6 +51,7 @@ static int meeting_guest(int master, GuestInfo *gi = NULL) {
   while (try_count--) {
     guest = accept(master, (struct sockaddr *) &addr, &addrlen);
     if (guest == -1) {
+      //fprintf(stderr, "accept error %d -> %s\n", errno, strerror(errno));
       if (errno == EINTR) continue;
       if (errno == EWOULDBLOCK) break;
       else break;
@@ -68,10 +73,40 @@ Socketor* Socketor::master_at(int port) {
   master = master_prepare(port);
   bell = epoll_create1(0);
   printf("bell is %d\n", bell);
+  printf("master is %d\n", master);
   struct epoll_event ev;
   ev.data.fd = master;
-  ev.events |= EPOLLIN;
-  epoll_ctl(bell, EPOLL_CTL_ADD, master, &ev);
+  ev.events = EPOLLIN;
+  int st = epoll_ctl(bell, EPOLL_CTL_ADD, master, &ev);
+  if (st == -1) {
+    fprintf(stderr, "master epoll_ctl error %d -> %s\n", errno, strerror(errno));
+  }
+  return this;
+}
+
+Socketor* Socketor::with_mistress(int mc) {
+  mistress_count = mc;
+  master_mic = (int *) malloc(mistress_count * sizeof(int));
+  mistress_radio = (int *) malloc(mistress_count * sizeof(int));
+  mistress_bell = (int *) malloc(mistress_count * sizeof(int));
+  int i;
+  for (i = 0; i < mistress_count; i++) {
+    *(mistress_bell + i) = epoll_create1(0);
+    int equipment[2] = {};
+    pipe2(equipment, O_NONBLOCK);
+    *(mistress_radio + i) = equipment[0];
+    *(master_mic + i) = equipment[1];
+    struct epoll_event ev;
+    ev.data.fd = *(mistress_radio + i);
+    ev.events = EPOLLIN;
+    epoll_ctl(*(mistress_bell + i), EPOLL_CTL_ADD, *(mistress_radio + i), &ev);
+  }
+  mistress_t = (thread **) malloc(mistress_count * sizeof(thread *));
+  return this;
+}
+
+Socketor* Socketor::do_on_guest(GuestHandler h) {
+  gh = h;
   return this;
 }
 
@@ -86,13 +121,28 @@ Socketor* Socketor::do_on_done(DoneHandler h) {
 }
 
 void Socketor::online() {
+  if (mistress_count) {
+    for (int i = 0; i < mistress_count; i++) {
+      *(mistress_t + i) = new thread(&Socketor::mistress_trading, this, i);
+    }
+  }
   t = thread(&Socketor::trading, this); 
 }
 
 void Socketor::offline() {
   tired = true;
+  int i;
+  for (i = 0; i < mistress_count; i++) {
+    (*(mistress_t + i))->join();
+  }
+
   t.join();
 }
+
+/* 
+ * wait_guest()
+ * wait_business()
+ */
 
 void Socketor::trading() {
   int i;
@@ -104,19 +154,31 @@ void Socketor::trading() {
       struct epoll_event *e = &ee[i];
       if (e->data.fd == master) {
         int guest = meeting_guest(master);
-        Session *s = new Session(guest);
-        guest_session[guest] = s;
-        struct epoll_event ev;
-        ev.data.fd = guest;
-        ev.events |= EPOLLIN;
-        epoll_ctl(bell, EPOLL_CTL_ADD, guest, &ev);
-        gh(s);
+        if (guest == -1) continue;
+        printf("guest is %d\n", guest);
+        if (mistress_count) {
+          write(*(master_mic + pos), &guest, 4);
+          guest_bell[guest] = *(mistress_bell + pos);
+          pos ++;
+          if (pos >= mistress_count) pos = 0;
+        } else {
+          Session *s = new Session(guest);
+          guest_session[guest] = s;
+          struct epoll_event ev;
+          ev.data.fd = guest;
+          ev.events = EPOLLIN;
+          int st = epoll_ctl(bell, EPOLL_CTL_ADD, guest, &ev);
+          if (st == -1) {
+            fprintf(stderr, "epoll_ctl error %d -> %s\n", errno, strerror(errno));
+          }
+          gh(s);
+        }
       } else {
         int guest = e->data.fd;
         Session *s = guest_session[guest];
         int g = s->save_gift();
         if (g == 0) {
-          printf("close by remote\n");
+          printf("### close by remote\n");
           if (dh) dh(s);
           see_you(guest);
         } else {
@@ -127,16 +189,62 @@ void Socketor::trading() {
   }
 }
 
+void Socketor::mistress_trading(int mistress_id) {
+  int i;
+  int my_id = mistress_id;
+  int my_bell = mistress_bell[my_id];
+  int my_radio = mistress_radio[my_id];
+  struct epoll_event ee[events_size];
+  while (!tired) {
+    int c = epoll_wait(my_bell, ee, events_size, 1000);
+    for (i = 0; i < c; i++) {
+      struct epoll_event *e = &ee[i];
+      if (e->data.fd == my_radio) {
+        int guest;
+        int nr = read(my_radio, &guest, 4);
+        assert(nr == 4);
+        printf("radio message is %d\n", guest);
+        Session *s = new Session(guest);
+        guest_session[guest] = s;
+        struct epoll_event ev;
+        ev.data.fd = guest;
+        ev.events = EPOLLIN;
+        epoll_ctl(my_bell, EPOLL_CTL_ADD, guest, &ev);
+        gh(s);
+      } else {
+        int guest = e->data.fd;
+        Session *s = guest_session[guest];
+        int g = s->save_gift();
+        if (g == 0) {
+          printf("### close by remote\n");
+          if (dh) dh(s);
+          see_you(guest);
+        } else {
+          bh(s);
+        }
+      }
+    }
+  }
+}
+
+void Socketor::see_you(Session *s) {
+  see_you(s->guest);
+}
+
 void Socketor::see_you(int guest) {
+  int tb = bell;
+  if (mistress_count) {
+    tb = guest_bell[guest];
+    guest_bell.erase(guest);
+  }
   struct epoll_event ev;
   ev.data.fd = guest;
-  ev.events |= EPOLLIN;
-  epoll_ctl(bell, EPOLL_CTL_DEL, guest, &ev);
+  ev.events = EPOLLIN;
+  epoll_ctl(tb, EPOLL_CTL_DEL, guest, &ev);
   Session *s = guest_session[guest];
   guest_session.erase(guest);
   delete s;
 }
-
 
 int Session::weight_gift() {
   int w;

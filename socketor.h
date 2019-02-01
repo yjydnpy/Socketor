@@ -32,19 +32,33 @@ struct Socketor {
   Socketor* do_on_guest(GuestHandler h);
   Socketor* do_on_business(BusinessHandler h);
   Socketor* do_on_done(DoneHandler h);
+  Socketor* with_mistress(int mc);
   void online();
   void offline();
   void trading();
+  void mistress_trading(int mistress_id);
   void see_you(int guest);
+  void see_you(Session *s);
 
   bool tired = false;
   int master;
+  int mistress_count = 0;
+  int pos = 0;
+  //int *mistress_plan;
+  //int *mistress_book;
+  int *master_mic = NULL; // master send message
+  int *mistress_radio = NULL; // mistress recv message
+
+  int *mistress_bell = NULL;
+  thread **mistress_t = NULL;
+
   int bell;
   thread t;
   GuestHandler gh;
   BusinessHandler bh;
   DoneHandler dh;
   map<int, Session *> guest_session;
+  map<int, int> guest_bell;
 }; /* struct Socketor */
 
 struct Session {
@@ -67,6 +81,7 @@ struct Session {
   int save_gift();
   int open_gift(char* gift, int gz);
   int give_gift(char *gb, int gz);
+  int seek_mark();
 }; /* struct Session */
 
 

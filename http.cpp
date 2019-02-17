@@ -32,8 +32,6 @@ struct ProtocolBuffer {
 };
 
 static int parse_http_requset(char *buf, int size, ProtocolBuffer *p) {
-  printf( "in function parse_http_requset \n");
-
   //assert(size > 4);
   int c = 0;
 
@@ -89,7 +87,6 @@ struct Client {
   ~Client() {
   }
   void fill_room() {
-    printf( "in function %s\n", __func__ );
     int gs = s->weight_gift();
     int cc = ROOM_SPACE - filling_size;
     if (cc < gs) {
@@ -190,12 +187,10 @@ struct SHS {
 };
 
 void SHS::create_client(Session *s) {
-  printf("in function %s\n", __func__);
   Client *c = new Client(s);
   clients[s] = c;
 }
 void SHS::give_up_client(Client *c) {
-  printf( "in function %s\n", __func__ );
   clients.erase(c->s);
   sr->see_you(c->s);
   delete c;
@@ -204,7 +199,6 @@ void SHS::give_up_client(Client *c) {
 }*/
 
 void SHS::try_deal(Session *s) {
-  printf( "in function %s\n", __func__ );
   Client *c = clients[s];
   c->fill_room();
   //c->s->open_gift(c-room, init
@@ -331,20 +325,4 @@ int main() {
   wc.stop();
   return 0;
 }
-
-/*
-
-on_message_done (parser *p) {
-  p->data->Line->produce(p->data->req);
-}
-
-
-
-try_create_req(
-  http_parser *hp = new;
-  hp->data = Client;
-  
-  h
-
-*/
 

@@ -27,8 +27,9 @@ struct GuestInfo {
 };
 
 struct Socketor {
+  Socketor();
   Socketor* master_at(int port);
-  Socketor* guest_to() {}
+  Socketor* guest_to(char *addr, Session **s);
   Socketor* do_on_guest(GuestHandler h);
   Socketor* do_on_business(BusinessHandler h);
   Socketor* do_on_done(DoneHandler h);
@@ -41,7 +42,7 @@ struct Socketor {
   void see_you(Session *s);
 
   bool tired = false;
-  int master;
+  int master = 0;
   int mistress_count = 0;
   int pos = 0;
   //int *mistress_plan;

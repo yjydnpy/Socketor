@@ -1,5 +1,6 @@
 #include "socketor.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sys/epoll.h>
 #include <sys/types.h>
@@ -12,6 +13,18 @@
 #include <cassert>
 
 #define events_size 100
+
+
+/* addr "127.0.0.1:8008" */
+static inline int addr_port(char *addr) {
+  return atoi(strchr(addr, ':') + 1);
+}
+
+static inline void addr_host(char *addr, char *host) {
+  int len = strchr(addr, ':') - addr;
+  strncpy(host, addr, len);
+  *(host + len) = '\0';
+}
 
 static void cannot_wait(int s) {
   int opts = fcntl(s, F_GETFL);
@@ -43,6 +56,24 @@ static int master_prepare(int port) {
   return s;
 }
 
+static int call_on(char *addr) {
+  int s = socket(AF_INET, SOCK_STREAM, 0);
+  struct sockaddr_in sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sin_family = AF_INET;
+
+  char host[20];
+  addr_host(addr, host);
+  sa.sin_addr.s_addr = inet_addr(host);
+  sa.sin_port = htons(addr_port(addr));
+  int ret = connect(s, (struct sockaddr *) &sa, sizeof(struct sockaddr));
+  if (ret == -1) {
+    printf("errno %d, info: %s\n", errno, strerror(errno));
+  }
+  cannot_wait(s);
+  return s;
+}
+
 static int meeting_guest(int master, GuestInfo *gi = NULL) {
   int try_count = 5;
   struct sockaddr addr;
@@ -69,10 +100,13 @@ static int meeting_guest(int master, GuestInfo *gi = NULL) {
   return guest;
 }
 
-Socketor* Socketor::master_at(int port) {
-  master = master_prepare(port);
+Socketor::Socketor() {
   bell = epoll_create1(0);
   printf("bell is %d\n", bell);
+}
+
+Socketor* Socketor::master_at(int port) {
+  master = master_prepare(port);
   printf("master is %d\n", master);
   struct epoll_event ev;
   ev.data.fd = master;
@@ -81,6 +115,18 @@ Socketor* Socketor::master_at(int port) {
   if (st == -1) {
     fprintf(stderr, "master epoll_ctl error %d -> %s\n", errno, strerror(errno));
   }
+  return this;
+}
+
+Socketor* Socketor::guest_to(char *addr, Session **s) {
+  int my_id = call_on(addr);
+  printf("my_id is %d\n", my_id);
+  *s = new Session(my_id);
+  guest_session[my_id] = *s;
+  struct epoll_event ev;
+  ev.data.fd = my_id;
+  ev.events = EPOLLIN;
+  epoll_ctl(bell, EPOLL_CTL_ADD, my_id, &ev);
   return this;
 }
 
@@ -149,13 +195,12 @@ void Socketor::trading() {
   struct epoll_event ee[events_size];
   while (!tired) {
     int c = epoll_wait(bell, ee, events_size, 1000);
-    if (c) printf("wait end %d\n", c);
     for (i = 0; i < c; i++) {
       struct epoll_event *e = &ee[i];
       if (e->data.fd == master) {
         int guest = meeting_guest(master);
-        if (guest == -1) continue;
         printf("guest is %d\n", guest);
+        if (guest == -1) continue;
         if (mistress_count) {
           write(*(master_mic + pos), &guest, 4);
           guest_bell[guest] = *(mistress_bell + pos);
@@ -171,7 +216,7 @@ void Socketor::trading() {
           if (st == -1) {
             fprintf(stderr, "epoll_ctl error %d -> %s\n", errno, strerror(errno));
           }
-          gh(s);
+          if (gh) gh(s);
         }
       } else {
         int guest = e->data.fd;
@@ -210,7 +255,7 @@ void Socketor::mistress_trading(int mistress_id) {
         ev.data.fd = guest;
         ev.events = EPOLLIN;
         epoll_ctl(my_bell, EPOLL_CTL_ADD, guest, &ev);
-        gh(s);
+        if (gh) gh(s);
       } else {
         int guest = e->data.fd;
         Session *s = guest_session[guest];
@@ -232,6 +277,7 @@ void Socketor::see_you(Session *s) {
 }
 
 void Socketor::see_you(int guest) {
+  close(guest);
   int tb = bell;
   if (mistress_count) {
     tb = guest_bell[guest];
@@ -257,7 +303,14 @@ int Session::weight_gift() {
 int Session::glance_gift() {
   if (weight_gift() < 4) return -1;
   int r;
-  memcpy(&r, buf + bf, 4);
+  if (bf + 4 <= buf_size) {
+    memcpy(&r, buf + bf, 4);
+  } else {
+    char *c = (char *) &r;
+    int fs = buf_size - bf;
+    memcpy(c, buf + bf, fs);
+    memcpy(c + fs, buf, 4 -fs);
+  }
   return r;
 }
 
@@ -330,6 +383,7 @@ int Session::open_gift(char *gift, int gz) {
 }
 
 int Session::give_gift(char *gb, int gz) {
-  return send(guest, gb, gz, 0);
+  int ret = send(guest, gb, gz, 0);
+  return ret;
 }
 

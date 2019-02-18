@@ -58,11 +58,11 @@ struct InfoPoster : public Poster {
   InfoPoster(char *addr) : Poster(addr) {
   }
 
-  int get_info(Container *req, Container *resp) {
+  int get_info(GetInfoReq *req, GetInfoResp *resp) {
     return post_mail(GET_INFO, req, resp);
   }
 
-  int set_info(Container *req, Container *resp) {
+  int set_info(SetInfoReq *req, SetInfoResp *resp) {
     return post_mail(SET_INFO, req, resp);
   }
 
